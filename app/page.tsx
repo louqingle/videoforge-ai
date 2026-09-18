@@ -33,7 +33,6 @@ export default function Home() {
         body: JSON.stringify({ prompt: prompt.trim(), ratio, duration, resolution, generateAudio: audio }),
       });
       const data = await res.json();
-
       if (!res.ok) throw new Error(data.error || "创建任务失败");
       poll(data.taskId);
     } catch (e) {
@@ -48,13 +47,12 @@ export default function Home() {
     timer.current = setInterval(async () => {
       checks += 1;
       setProgress(Math.min(92, 8 + checks * 3));
-
       try {
         const res = await fetch(`/api/video?id=${encodeURIComponent(id)}`, { cache: "no-store" });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "查询任务失败");
 
-        if (data.status === "succeeded") {
+        if (data.status === "succeeded" || data.status === "success") {
           if (timer.current) clearInterval(timer.current);
           setProgress(100);
           setVideoUrl(data.videoUrl || "");
@@ -77,11 +75,11 @@ export default function Home() {
     <main className="app">
       <header className="topbar">
         <div className="brand"><span className="mark">V</span><span>VideoForge</span><em>AI</em></div>
-        <div className="topMeta"><span>SEEDANCE 2.5</span><span className="dot" /><span>AI VIDEO STUDIO</span></div>
+        <div className="topMeta"><span>SEEDANCE 2.0</span><span className="dot" /><span>AI VIDEO STUDIO</span></div>
       </header>
 
       <section className="hero">
-        <div className="pill">POWERED BY SEEDANCE</div>
+        <div className="pill">POWERED BY SEEDANCE 2.0</div>
         <h1>你的想法，<span>直接变成视频</span></h1>
         <p>输入一句描述，生成电影感 AI 视频。</p>
 
@@ -133,7 +131,7 @@ export default function Home() {
         {status === "generating" && (
           <div className="statusCard">
             <div className="loader" />
-            <div className="statusText"><strong>正在生成视频</strong><span>AI 正在理解提示词并渲染画面，请保持页面打开。</span></div>
+            <div className="statusText"><strong>正在生成视频</strong><span>Seedance 2.0 正在渲染，请保持页面打开。</span></div>
             <div className="bar"><i style={{ width: `${progress}%` }} /></div>
           </div>
         )}
@@ -156,7 +154,7 @@ export default function Home() {
         </div>
       </section>
 
-      <footer><span>VideoForge AI</span><span>Seedance 2.5</span><span>© 2026</span></footer>
+      <footer><span>VideoForge AI</span><span>Seedance 2.0</span><span>© 2026</span></footer>
     </main>
   );
 }
