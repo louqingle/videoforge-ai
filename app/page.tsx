@@ -3,14 +3,18 @@
 import { useEffect, useRef, useState } from "react";
 
 type Ratio = "9:16" | "16:9" | "1:1";
+type Resolution = "720p" | "1080p";
 
 export default function Home() {
   const [prompt, setPrompt] = useState("");
   const [ratio, setRatio] = useState<Ratio>("9:16");
-  const [taskId, setTaskId] = useState("");
+  const [duration, setDuration] = useState(5);
+  const [resolution, setResolution] = useState<Resolution>("720p");
+  const [audio, setAudio] = useState(true);
   const [status, setStatus] = useState<"idle" | "generating" | "success" | "failed">("idle");
   const [videoUrl, setVideoUrl] = useState("");
   const [error, setError] = useState("");
+  const [progress, setProgress] = useState(0);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => () => { if (timer.current) clearInterval(timer.current); }, []);
@@ -20,97 +24,139 @@ export default function Home() {
     setStatus("generating");
     setVideoUrl("");
     setError("");
+    setProgress(5);
 
-    const res = await fetch("/api/video", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt: prompt.trim(), ratio })
-    });
-    const data = await res.json();
+    try {
+      const res = await fetch("/api/video", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: prompt.trim(), ratio, duration, resolution, generateAudio: audio }),
+      });
+      const data = await res.json();
 
-    if (!res.ok) {
+      if (!res.ok) throw new Error(data.error || "创建任务失败");
+      poll(data.taskId);
+    } catch (e) {
       setStatus("failed");
-      setError(data.error || "创建任务失败");
-      return;
+      setError(e instanceof Error ? e.message : "创建任务失败");
     }
-
-    setTaskId(data.taskId);
-    poll(data.taskId);
   }
 
   function poll(id: string) {
     if (timer.current) clearInterval(timer.current);
+    let checks = 0;
     timer.current = setInterval(async () => {
-      const res = await fetch(`/api/video?id=${encodeURIComponent(id)}`, { cache: "no-store" });
-      const data = await res.json();
+      checks += 1;
+      setProgress(Math.min(92, 8 + checks * 3));
 
-      if (data.status === "SUCCEEDED") {
-        if (timer.current) clearInterval(timer.current);
-        setVideoUrl(data.videoUrl || "");
-        setStatus("success");
-      } else if (data.status === "FAILED" || data.status === "CANCELED") {
+      try {
+        const res = await fetch(`/api/video?id=${encodeURIComponent(id)}`, { cache: "no-store" });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "查询任务失败");
+
+        if (data.status === "succeeded") {
+          if (timer.current) clearInterval(timer.current);
+          setProgress(100);
+          setVideoUrl(data.videoUrl || "");
+          setStatus(data.videoUrl ? "success" : "failed");
+          if (!data.videoUrl) setError("任务成功但没有返回视频地址，请稍后重试。");
+        } else if (["failed", "cancelled", "expired"].includes(data.status)) {
+          if (timer.current) clearInterval(timer.current);
+          setStatus("failed");
+          setError(data.error || "视频生成失败，请重试。");
+        }
+      } catch (e) {
         if (timer.current) clearInterval(timer.current);
         setStatus("failed");
-        setError(data.error || "视频生成失败，请重试");
+        setError(e instanceof Error ? e.message : "查询任务失败");
       }
-    }, 4000);
+    }, 5000);
   }
 
   return (
-    <main className="page">
-      <nav className="nav">
-        <div className="brand"><span className="logo">V</span> VideoForge <b>AI</b></div>
-        <div className="navRight"><span>AI Video Studio</span><button className="ghost">登录</button></div>
-      </nav>
+    <main className="app">
+      <header className="topbar">
+        <div className="brand"><span className="mark">V</span><span>VideoForge</span><em>AI</em></div>
+        <div className="topMeta"><span>SEEDANCE 2.5</span><span className="dot" /><span>AI VIDEO STUDIO</span></div>
+      </header>
 
       <section className="hero">
-        <div className="eyebrow">AI VIDEO STUDIO</div>
-        <h1>把一个想法，<span>变成视频。</span></h1>
-        <p>输入一句话，AI 自动生成电影感短视频。</p>
+        <div className="pill">POWERED BY SEEDANCE</div>
+        <h1>你的想法，<span>直接变成视频</span></h1>
+        <p>输入一句描述，生成电影感 AI 视频。</p>
 
-        <div className="studio">
+        <div className="workspace">
+          <div className="promptTop"><span>VIDEO PROMPT</span><span>{prompt.length}/2000</span></div>
           <textarea
             value={prompt}
-            onChange={e => setPrompt(e.target.value)}
-            placeholder="例如：一只橘猫在东京雨夜的街头慢慢走过，霓虹灯倒映在湿漉漉的路面上，电影感，真实摄影..."
-            maxLength={1800}
+            onChange={(e) => setPrompt(e.target.value)}
+            maxLength={2000}
+            placeholder="例如：雨夜东京街头，一名年轻人撑着黑色雨伞缓慢走过，霓虹灯映在湿润路面，手持电影摄影机跟拍，真实光影，浅景深……"
           />
-          <div className="controls">
-            <div className="ratios">
-              <span>画幅</span>
-              {(["9:16", "16:9", "1:1"] as Ratio[]).map(r => (
-                <button key={r} className={ratio === r ? "ratio active" : "ratio"} onClick={() => setRatio(r)}>
-                  {r}
-                </button>
-              ))}
+
+          <div className="settings">
+            <div className="setting">
+              <label>画幅</label>
+              <div className="seg">
+                {(["9:16", "16:9", "1:1"] as Ratio[]).map((x) => (
+                  <button key={x} className={ratio === x ? "on" : ""} onClick={() => setRatio(x)}>{x}</button>
+                ))}
+              </div>
             </div>
-            <button className="generate" onClick={generate} disabled={!prompt.trim() || status === "generating"}>
-              {status === "generating" ? "生成中…" : "✨ 开始生成"}
-            </button>
+            <div className="setting">
+              <label>时长</label>
+              <div className="seg">
+                {[5, 10, 15].map((x) => (
+                  <button key={x} className={duration === x ? "on" : ""} onClick={() => setDuration(x)}>{x}s</button>
+                ))}
+              </div>
+            </div>
+            <div className="setting">
+              <label>清晰度</label>
+              <div className="seg">
+                {(["720p", "1080p"] as Resolution[]).map((x) => (
+                  <button key={x} className={resolution === x ? "on" : ""} onClick={() => setResolution(x)}>{x}</button>
+                ))}
+              </div>
+            </div>
+            <div className="setting">
+              <label>声音</label>
+              <button className={audio ? "audio on" : "audio"} onClick={() => setAudio(!audio)}>{audio ? "● 开启" : "○ 关闭"}</button>
+            </div>
           </div>
+
+          <button className="generate" onClick={generate} disabled={!prompt.trim() || status === "generating"}>
+            {status === "generating" ? `正在生成 · ${progress}%` : "生成视频  →"}
+          </button>
         </div>
 
         {status === "generating" && (
-          <div className="progressCard">
-            <div className="spinner" />
-            <div>
-              <strong>正在生成你的 AI 视频</strong>
-              <p>视频生成通常需要一些时间，请不要关闭页面。</p>
-            </div>
+          <div className="statusCard">
+            <div className="loader" />
+            <div className="statusText"><strong>正在生成视频</strong><span>AI 正在理解提示词并渲染画面，请保持页面打开。</span></div>
+            <div className="bar"><i style={{ width: `${progress}%` }} /></div>
           </div>
         )}
 
-        {status === "failed" && <div className="error">{error}</div>}
+        {status === "failed" && <div className="errorCard">{error}</div>}
 
         {status === "success" && videoUrl && (
-          <div className="result">
-            <div className="resultHead"><strong>生成完成</strong><span>5 秒 · {ratio}</span></div>
-            <video className={ratio === "9:16" ? "video vertical" : "video"} src={videoUrl} controls playsInline />
-            <a className="download" href={videoUrl} target="_blank" rel="noreferrer">打开 / 保存视频</a>
+          <div className="resultCard">
+            <div className="resultTitle"><strong>生成完成</strong><span>{duration}s · {resolution} · {ratio}</span></div>
+            <video src={videoUrl} controls playsInline className={ratio === "9:16" ? "video portrait" : "video"} />
+            <a href={videoUrl} target="_blank" rel="noreferrer" className="save">打开视频 / 保存到设备</a>
           </div>
         )}
+
+        <div className="examples">
+          <span>试试这些：</span>
+          {["赛博朋克城市夜景", "一只猫在海边奔跑", "高端产品广告片"].map((x) => (
+            <button key={x} onClick={() => setPrompt(x)}>{x}</button>
+          ))}
+        </div>
       </section>
-      <footer>VideoForge AI · V1</footer>
+
+      <footer><span>VideoForge AI</span><span>Seedance 2.5</span><span>© 2026</span></footer>
     </main>
   );
 }
