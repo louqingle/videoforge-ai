@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 
 const ARK_BASE_URL =
   process.env.ARK_BASE_URL || "https://ark.cn-beijing.volces.com/api/v3";
-const MODEL = process.env.ARK_VIDEO_MODEL || "doubao-seedance-2-5-260628";
+
+// Seedance 2.0 standard model
+const MODEL = "doubao-seedance-2-0-260128";
 
 const allowedRatios = new Set(["9:16", "16:9", "1:1", "4:3", "3:4", "21:9", "adaptive"]);
 const allowedResolutions = new Set(["480p", "720p", "1080p"]);
@@ -30,8 +32,8 @@ export async function POST(req: NextRequest) {
     if (!prompt) return NextResponse.json({ error: "请输入视频描述。" }, { status: 400 });
     if (!allowedRatios.has(ratio)) return NextResponse.json({ error: "不支持的画幅。" }, { status: 400 });
     if (!allowedResolutions.has(resolution)) return NextResponse.json({ error: "不支持的分辨率。" }, { status: 400 });
-    if (!Number.isInteger(duration) || duration < 4 || duration > 30) {
-      return NextResponse.json({ error: "视频时长需要在 4～30 秒之间。" }, { status: 400 });
+    if (!Number.isInteger(duration) || duration < 4 || duration > 15) {
+      return NextResponse.json({ error: "Seedance 2.0 视频时长需要在 4～15 秒之间。" }, { status: 400 });
     }
 
     const response = await fetch(`${ARK_BASE_URL}/contents/generations/tasks`, {
@@ -96,8 +98,16 @@ export async function GET(req: NextRequest) {
     }
 
     const status = String(data?.status || "queued").toLowerCase();
-    const videoUrl = data?.content?.video_url || data?.output?.video_url || data?.video_url || "";
-    const error = data?.error?.message || data?.error?.detail || data?.message || "";
+    const videoUrl =
+      data?.content?.video_url ||
+      data?.output?.video_url ||
+      data?.video_url ||
+      "";
+    const error =
+      data?.error?.message ||
+      data?.error?.detail ||
+      data?.message ||
+      "";
 
     return NextResponse.json({ status, videoUrl, error, taskId: id });
   } catch (error) {
