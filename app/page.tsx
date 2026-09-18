@@ -1,160 +1,29 @@
 "use client";
-
-import { useEffect, useRef, useState } from "react";
-
-type Ratio = "9:16" | "16:9" | "1:1";
-type Resolution = "720p" | "1080p";
-
-export default function Home() {
-  const [prompt, setPrompt] = useState("");
-  const [ratio, setRatio] = useState<Ratio>("9:16");
-  const [duration, setDuration] = useState(5);
-  const [resolution, setResolution] = useState<Resolution>("720p");
-  const [audio, setAudio] = useState(true);
-  const [status, setStatus] = useState<"idle" | "generating" | "success" | "failed">("idle");
-  const [videoUrl, setVideoUrl] = useState("");
-  const [error, setError] = useState("");
-  const [progress, setProgress] = useState(0);
-  const timer = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  useEffect(() => () => { if (timer.current) clearInterval(timer.current); }, []);
-
-  async function generate() {
-    if (!prompt.trim() || status === "generating") return;
-    setStatus("generating");
-    setVideoUrl("");
-    setError("");
-    setProgress(5);
-
-    try {
-      const res = await fetch("/api/video", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: prompt.trim(), ratio, duration, resolution, generateAudio: audio }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "创建任务失败");
-      poll(data.taskId);
-    } catch (e) {
-      setStatus("failed");
-      setError(e instanceof Error ? e.message : "创建任务失败");
-    }
-  }
-
-  function poll(id: string) {
-    if (timer.current) clearInterval(timer.current);
-    let checks = 0;
-    timer.current = setInterval(async () => {
-      checks += 1;
-      setProgress(Math.min(92, 8 + checks * 3));
-      try {
-        const res = await fetch(`/api/video?id=${encodeURIComponent(id)}`, { cache: "no-store" });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "查询任务失败");
-
-        if (data.status === "succeeded" || data.status === "success") {
-          if (timer.current) clearInterval(timer.current);
-          setProgress(100);
-          setVideoUrl(data.videoUrl || "");
-          setStatus(data.videoUrl ? "success" : "failed");
-          if (!data.videoUrl) setError("任务成功但没有返回视频地址，请稍后重试。");
-        } else if (["failed", "cancelled", "expired"].includes(data.status)) {
-          if (timer.current) clearInterval(timer.current);
-          setStatus("failed");
-          setError(data.error || "视频生成失败，请重试。");
-        }
-      } catch (e) {
-        if (timer.current) clearInterval(timer.current);
-        setStatus("failed");
-        setError(e instanceof Error ? e.message : "查询任务失败");
-      }
-    }, 5000);
-  }
-
-  return (
-    <main className="app">
-      <header className="topbar">
-        <div className="brand"><span className="mark">V</span><span>VideoForge</span><em>AI</em></div>
-        <div className="topMeta"><span>SEEDANCE 2.0</span><span className="dot" /><span>AI VIDEO STUDIO</span></div>
-      </header>
-
-      <section className="hero">
-        <div className="pill">POWERED BY SEEDANCE 2.0</div>
-        <h1>你的想法，<span>直接变成视频</span></h1>
-        <p>输入一句描述，生成电影感 AI 视频。</p>
-
-        <div className="workspace">
-          <div className="promptTop"><span>VIDEO PROMPT</span><span>{prompt.length}/2000</span></div>
-          <textarea
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            maxLength={2000}
-            placeholder="例如：雨夜东京街头，一名年轻人撑着黑色雨伞缓慢走过，霓虹灯映在湿润路面，手持电影摄影机跟拍，真实光影，浅景深……"
-          />
-
-          <div className="settings">
-            <div className="setting">
-              <label>画幅</label>
-              <div className="seg">
-                {(["9:16", "16:9", "1:1"] as Ratio[]).map((x) => (
-                  <button key={x} className={ratio === x ? "on" : ""} onClick={() => setRatio(x)}>{x}</button>
-                ))}
-              </div>
-            </div>
-            <div className="setting">
-              <label>时长</label>
-              <div className="seg">
-                {[5, 10, 15].map((x) => (
-                  <button key={x} className={duration === x ? "on" : ""} onClick={() => setDuration(x)}>{x}s</button>
-                ))}
-              </div>
-            </div>
-            <div className="setting">
-              <label>清晰度</label>
-              <div className="seg">
-                {(["720p", "1080p"] as Resolution[]).map((x) => (
-                  <button key={x} className={resolution === x ? "on" : ""} onClick={() => setResolution(x)}>{x}</button>
-                ))}
-              </div>
-            </div>
-            <div className="setting">
-              <label>声音</label>
-              <button className={audio ? "audio on" : "audio"} onClick={() => setAudio(!audio)}>{audio ? "● 开启" : "○ 关闭"}</button>
-            </div>
-          </div>
-
-          <button className="generate" onClick={generate} disabled={!prompt.trim() || status === "generating"}>
-            {status === "generating" ? `正在生成 · ${progress}%` : "生成视频  →"}
-          </button>
-        </div>
-
-        {status === "generating" && (
-          <div className="statusCard">
-            <div className="loader" />
-            <div className="statusText"><strong>正在生成视频</strong><span>Seedance 2.0 正在渲染，请保持页面打开。</span></div>
-            <div className="bar"><i style={{ width: `${progress}%` }} /></div>
-          </div>
-        )}
-
-        {status === "failed" && <div className="errorCard">{error}</div>}
-
-        {status === "success" && videoUrl && (
-          <div className="resultCard">
-            <div className="resultTitle"><strong>生成完成</strong><span>{duration}s · {resolution} · {ratio}</span></div>
-            <video src={videoUrl} controls playsInline className={ratio === "9:16" ? "video portrait" : "video"} />
-            <a href={videoUrl} target="_blank" rel="noreferrer" className="save">打开视频 / 保存到设备</a>
-          </div>
-        )}
-
-        <div className="examples">
-          <span>试试这些：</span>
-          {["赛博朋克城市夜景", "一只猫在海边奔跑", "高端产品广告片"].map((x) => (
-            <button key={x} onClick={() => setPrompt(x)}>{x}</button>
-          ))}
-        </div>
-      </section>
-
-      <footer><span>VideoForge AI</span><span>Seedance 2.0</span><span>© 2026</span></footer>
-    </main>
-  );
+import {useEffect,useRef,useState} from "react";
+type Mode="video"|"3d"; type Ratio="9:16"|"16:9"|"1:1"; type Resolution="720p"|"1080p"; type Q="high"|"medium"|"low"; type F="glb"|"usdz"|"fbx"|"obj"|"stl";
+export default function Home(){
+ const [mode,setMode]=useState<Mode>("video"),[prompt,setPrompt]=useState(""),[ratio,setRatio]=useState<Ratio>("9:16"),[duration,setDuration]=useState(5),[resolution,setResolution]=useState<Resolution>("720p"),[audio,setAudio]=useState(true);
+ const [vs,setVs]=useState<"idle"|"generating"|"success"|"failed">("idle"),[video,setVideo]=useState(""),[ve,setVe]=useState(""),[vp,setVp]=useState(0);
+ const [q,setQ]=useState<Q>("medium"),[format,setFormat]=useState<F>("glb"),[ts,setTs]=useState<"idle"|"generating"|"success"|"failed">("idle"),[files,setFiles]=useState<{name:string,url:string}[]>([]),[te,setTe]=useState(""),[tp,setTp]=useState(0);
+ const timer=useRef<ReturnType<typeof setInterval>|null>(null),timer3=useRef<ReturnType<typeof setInterval>|null>(null);
+ useEffect(()=>()=>{if(timer.current)clearInterval(timer.current);if(timer3.current)clearInterval(timer3.current)},[]);
+ async function genVideo(){if(!prompt.trim()||vs==="generating")return;setVs("generating");setVideo("");setVe("");setVp(5);try{const r=await fetch("/api/video",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({prompt:prompt.trim(),ratio,duration,resolution,generateAudio:audio})}),d=await r.json();if(!r.ok)throw Error(d.error||"创建任务失败");pollVideo(d.taskId)}catch(e){setVs("failed");setVe(e instanceof Error?e.message:"创建任务失败")}}
+ function pollVideo(id:string){if(timer.current)clearInterval(timer.current);let n=0;timer.current=setInterval(async()=>{n++;setVp(Math.min(92,8+n*3));try{const r=await fetch("/api/video?id="+encodeURIComponent(id),{cache:"no-store"}),d=await r.json();if(!r.ok)throw Error(d.error||"查询任务失败");if(d.status==="succeeded"||d.status==="success"){if(timer.current)clearInterval(timer.current);setVp(100);setVideo(d.videoUrl||"");setVs(d.videoUrl?"success":"failed");if(!d.videoUrl)setVe("任务成功但没有返回视频地址。")}else if(["failed","cancelled","expired"].includes(d.status)){if(timer.current)clearInterval(timer.current);setVs("failed");setVe(d.error||"视频生成失败。")}}catch(e){if(timer.current)clearInterval(timer.current);setVs("failed");setVe(e instanceof Error?e.message:"查询任务失败")}},5000)}
+ async function gen3d(){if(!prompt.trim()||ts==="generating")return;setTs("generating");setFiles([]);setTe("");setTp(5);try{const r=await fetch("/api/3d",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({prompt:prompt.trim(),quality:q,format})}),d=await r.json();if(!r.ok)throw Error(d.error||"创建3D任务失败");poll3d(d.taskId,d.subscriptionKey)}catch(e){setTs("failed");setTe(e instanceof Error?e.message:"创建3D任务失败")}}
+ function poll3d(task:string,key:string){if(timer3.current)clearInterval(timer3.current);let n=0;timer3.current=setInterval(async()=>{n++;setTp(Math.min(94,8+n*5));try{const r=await fetch("/api/3d?task="+encodeURIComponent(task)+"&key="+encodeURIComponent(key),{cache:"no-store"}),d=await r.json();if(!r.ok)throw Error(d.error||"查询3D任务失败");if(d.status==="success"){if(timer3.current)clearInterval(timer3.current);setTp(100);setFiles(d.files||[]);setTs(d.files?.length?"success":"failed");if(!d.files?.length)setTe("生成完成，但没有返回模型文件。")}else if(d.status==="failed"){if(timer3.current)clearInterval(timer3.current);setTs("failed");setTe(d.error||"3D模型生成失败。")}}catch(e){if(timer3.current)clearInterval(timer3.current);setTs("failed");setTe(e instanceof Error?e.message:"查询3D任务失败")}},6000)}
+ return <main className="app"><header className="topbar"><div className="brand"><span className="mark">V</span><span>VideoForge</span><em>AI</em></div><div className="topMeta"><span>{mode==="video"?"SEEDANCE 2.0":"HYPER3D GEN-2"}</span><span className="dot"/><span>AI CREATION STUDIO</span></div></header>
+ <section className="hero"><div className="modeSwitch"><button className={mode==="video"?"active":""} onClick={()=>setMode("video")}>🎬 AI 视频</button><button className={mode==="3d"?"active":""} onClick={()=>setMode("3d")}>◇ AI 3D</button></div>
+ <div className="pill">{mode==="video"?"POWERED BY SEEDANCE 2.0":"POWERED BY HYPER3D RODIN GEN-2"}</div>
+ <h1>{mode==="video"?<>你的想法，<span>直接变成视频</span></>:<>一句话，<span>生成 3D 模型</span></>}</h1><p>{mode==="video"?"输入一句描述，生成电影感 AI 视频。":"用文字生成可下载的 3D 资产，支持 GLB、USDZ、FBX、OBJ、STL。"}</p>
+ <div className="workspace"><div className="promptTop"><span>{mode==="video"?"VIDEO PROMPT":"3D MODEL PROMPT"}</span><span>{prompt.length}/{mode==="video"?2000:1024}</span></div>
+ <textarea value={prompt} onChange={e=>setPrompt(e.target.value)} maxLength={mode==="video"?2000:1024} placeholder={mode==="video"?"例如：雨夜东京街头，一名年轻人撑着黑色雨伞缓慢走过，霓虹灯映在湿润路面，电影级摄影……":"例如：一辆未来感黑色超跑，流线型车身，锐利 LED 灯带，真实 PBR 材质，适合游戏和产品展示……"}/>
+ {mode==="video"?<div className="settings"><div className="setting"><label>画幅</label><div className="seg">{(["9:16","16:9","1:1"] as Ratio[]).map(x=><button key={x} className={ratio===x?"on":""} onClick={()=>setRatio(x)}>{x}</button>)}</div></div><div className="setting"><label>时长</label><div className="seg">{[5,10,15].map(x=><button key={x} className={duration===x?"on":""} onClick={()=>setDuration(x)}>{x}s</button>)}</div></div><div className="setting"><label>清晰度</label><div className="seg">{(["720p","1080p"] as Resolution[]).map(x=><button key={x} className={resolution===x?"on":""} onClick={()=>setResolution(x)}>{x}</button>)}</div></div><div className="setting"><label>声音</label><button className={audio?"audio on":"audio"} onClick={()=>setAudio(!audio)}>{audio?"● 开启":"○ 关闭"}</button></div></div>
+ :<div className="settings"><div className="setting"><label>模型质量</label><div className="seg">{(["low","medium","high"] as Q[]).map(x=><button key={x} className={q===x?"on":""} onClick={()=>setQ(x)}>{x==="low"?"快速":x==="medium"?"标准":"高质量"}</button>)}</div></div><div className="setting"><label>输出格式</label><div className="seg">{(["glb","usdz","fbx","obj","stl"] as F[]).map(x=><button key={x} className={format===x?"on":""} onClick={()=>setFormat(x)}>{x.toUpperCase()}</button>)}</div></div><div className="setting"><label>网格</label><button className="audio on">QUAD</button></div><div className="setting"><label>材质</label><button className="audio on">PBR</button></div></div>}
+ <button className="generate" onClick={mode==="video"?genVideo:gen3d} disabled={!prompt.trim()||(mode==="video"?vs==="generating":ts==="generating")}>{mode==="video"?(vs==="generating"?`正在生成 · ${vp}%`:"生成视频 →"):(ts==="generating"?`正在生成 3D · ${tp}%`:"生成 3D 模型 →")}</button></div>
+ {mode==="video"&&vs==="generating"&&<div className="statusCard"><div className="loader"/><div className="statusText"><strong>正在生成视频</strong><span>Seedance 2.0 正在渲染，请保持页面打开。</span></div><div className="bar"><i style={{width:vp+"%"}}/></div></div>}
+ {mode==="video"&&vs==="failed"&&<div className="errorCard">{ve}</div>}{mode==="video"&&vs==="success"&&video&&<div className="resultCard"><div className="resultTitle"><strong>生成完成</strong><span>{duration}s · {resolution} · {ratio}</span></div><video src={video} controls playsInline className={ratio==="9:16"?"video portrait":"video"}/><a href={video} target="_blank" rel="noreferrer" className="save">打开视频 / 保存到设备</a></div>}
+ {mode==="3d"&&ts==="generating"&&<div className="statusCard"><div className="loader"/><div className="statusText"><strong>正在生成 3D 模型</strong><span>Hyper3D Gen-2 正在生成几何、材质和贴图。</span></div><div className="bar"><i style={{width:tp+"%"}}/></div></div>}
+ {mode==="3d"&&ts==="failed"&&<div className="errorCard">{te}</div>}{mode==="3d"&&ts==="success"&&<div className="resultCard"><div className="resultTitle"><strong>3D 生成完成</strong><span>Hyper3D Gen-2 · PBR</span></div><div className="modelResult"><div className="modelIcon">◇</div><div><strong>{files[0]?.name||"model."+format}</strong><span>可导入 Blender / Unity / Unreal。</span></div></div><div className="fileList">{files.map(f=><a key={f.url} href={f.url} target="_blank" rel="noreferrer" className="fileLink">下载 {f.name} ↗</a>)}</div><p className="downloadNote">下载链接为 Hyper3D 临时签发，请生成后及时保存。</p></div>}
+ <div className="examples"><span>试试这些：</span>{(mode==="video"?["赛博朋克城市夜景","一只猫在海边奔跑","高端产品广告片"]:["未来黑色超跑","可爱的柴犬玩偶","赛博朋克机器人"]).map(x=><button key={x} onClick={()=>setPrompt(x)}>{x}</button>)}</div></section>
+ <footer><span>VideoForge AI</span><span>{mode==="video"?"Seedance 2.0":"Hyper3D Gen-2"}</span><span>© 2026</span></footer></main>
 }
