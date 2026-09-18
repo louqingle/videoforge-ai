@@ -1,55 +1,73 @@
-import RunwayML from "@runwayml/sdk";
 import { NextRequest, NextResponse } from "next/server";
 
-const client = new RunwayML({
-  apiKey: process.env.RUNWAYML_API_SECRET,
-});
+const ARK_BASE_URL =
+  process.env.ARK_BASE_URL || "https://ark.cn-beijing.volces.com/api/v3";
+const MODEL = process.env.ARK_VIDEO_MODEL || "doubao-seedance-2-5-260628";
 
-const ratios = {
-  "9:16": "720:1280",
-  "16:9": "1280:720",
-  "1:1": "960:960",
-} as const;
+const allowedRatios = new Set(["9:16", "16:9", "1:1", "4:3", "3:4", "21:9", "adaptive"]);
+const allowedResolutions = new Set(["480p", "720p", "1080p"]);
+
+function headers() {
+  return {
+    Authorization: `Bearer ${process.env.ARK_API_KEY || ""}`,
+    "Content-Type": "application/json",
+  };
+}
 
 export async function POST(req: NextRequest) {
   try {
-    if (!process.env.RUNWAYML_API_SECRET) {
-      return NextResponse.json(
-        { error: "服务器尚未配置 RUNWAYML_API_SECRET" },
-        { status: 500 }
-      );
+    if (!process.env.ARK_API_KEY) {
+      return NextResponse.json({ error: "尚未配置 ARK_API_KEY。" }, { status: 500 });
     }
 
     const body = await req.json();
     const prompt = String(body.prompt || "").trim();
-    const ratio = body.ratio as keyof typeof ratios;
+    const ratio = String(body.ratio || "9:16");
+    const duration = Number(body.duration || 5);
+    const resolution = String(body.resolution || "720p");
+    const generateAudio = Boolean(body.generateAudio);
 
-    if (!prompt) {
-      return NextResponse.json({ error: "请输入视频描述" }, { status: 400 });
+    if (!prompt) return NextResponse.json({ error: "请输入视频描述。" }, { status: 400 });
+    if (!allowedRatios.has(ratio)) return NextResponse.json({ error: "不支持的画幅。" }, { status: 400 });
+    if (!allowedResolutions.has(resolution)) return NextResponse.json({ error: "不支持的分辨率。" }, { status: 400 });
+    if (!Number.isInteger(duration) || duration < 4 || duration > 30) {
+      return NextResponse.json({ error: "视频时长需要在 4～30 秒之间。" }, { status: 400 });
     }
 
-    if (!ratios[ratio]) {
-      return NextResponse.json({ error: "不支持的画幅" }, { status: 400 });
-    }
-
-    // Gen-4.5 supports text-to-video through the imageToVideo endpoint.
-    // promptImage is intentionally omitted for pure text-to-video generation.
-    const task = await client.imageToVideo.create({
-      model: "gen4.5",
-      promptText: prompt,
-      ratio: ratios[ratio],
-      duration: 5,
+    const response = await fetch(`${ARK_BASE_URL}/contents/generations/tasks`, {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({
+        model: MODEL,
+        content: [{ type: "text", text: prompt }],
+        ratio,
+        duration,
+        resolution,
+        generate_audio: generateAudio,
+      }),
+      cache: "no-store",
     });
 
-    return NextResponse.json({ taskId: task.id });
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      console.error("ARK create error:", data);
+      return NextResponse.json(
+        { error: data?.message || data?.error?.message || `火山方舟请求失败（HTTP ${response.status}）` },
+        { status: response.status >= 400 && response.status < 500 ? response.status : 502 }
+      );
+    }
+
+    const taskId = data?.id || data?.task_id;
+    if (!taskId) {
+      return NextResponse.json({ error: "火山方舟没有返回任务 ID。", detail: data }, { status: 502 });
+    }
+
+    return NextResponse.json({ taskId, model: MODEL });
   } catch (error) {
     console.error(error);
-
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error ? error.message : "创建视频任务失败",
-      },
+      { error: error instanceof Error ? error.message : "创建视频任务失败。" },
       { status: 500 }
     );
   }
@@ -57,43 +75,35 @@ export async function POST(req: NextRequest) {
 
 export async function GET(req: NextRequest) {
   try {
+    if (!process.env.ARK_API_KEY) {
+      return NextResponse.json({ error: "尚未配置 ARK_API_KEY。" }, { status: 500 });
+    }
+
     const id = req.nextUrl.searchParams.get("id");
+    if (!id) return NextResponse.json({ error: "缺少 task id。" }, { status: 400 });
 
-    if (!id) {
-      return NextResponse.json({ error: "缺少 task id" }, { status: 400 });
+    const response = await fetch(
+      `${ARK_BASE_URL}/contents/generations/tasks/${encodeURIComponent(id)}`,
+      { headers: headers(), cache: "no-store" }
+    );
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      return NextResponse.json(
+        { error: data?.message || data?.error?.message || `查询任务失败（HTTP ${response.status}）` },
+        { status: response.status >= 400 && response.status < 500 ? response.status : 502 }
+      );
     }
 
-    const task = await client.tasks.retrieve(id);
+    const status = String(data?.status || "queued").toLowerCase();
+    const videoUrl = data?.content?.video_url || data?.output?.video_url || data?.video_url || "";
+    const error = data?.error?.message || data?.error?.detail || data?.message || "";
 
-    if (task.status === "SUCCEEDED") {
-      return NextResponse.json({
-        status: task.status,
-        videoUrl: task.output[0] || "",
-        error: "",
-      });
-    }
-
-    if (task.status === "FAILED") {
-      return NextResponse.json({
-        status: task.status,
-        videoUrl: "",
-        error: task.failureCode || "视频生成失败",
-      });
-    }
-
-    return NextResponse.json({
-      status: task.status,
-      videoUrl: "",
-      error: "",
-    });
+    return NextResponse.json({ status, videoUrl, error, taskId: id });
   } catch (error) {
     console.error(error);
-
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error ? error.message : "查询任务失败",
-      },
+      { error: error instanceof Error ? error.message : "查询视频任务失败。" },
       { status: 500 }
     );
   }
